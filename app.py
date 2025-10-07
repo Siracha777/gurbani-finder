@@ -3,7 +3,7 @@ MOBILE-FRIENDLY GURBANI APP - Streamlit Version
 ================================================
 Access from phone browser: http://your-ip:8501
 """
-import urllib.request
+
 import streamlit as st
 import json
 import os
@@ -68,10 +68,21 @@ GURBANI_DB = "gurbani.json"
 
 @st.cache_resource
 def load_database():
-    """Load database once and cache it"""
+    """Load database once and cache it, download if needed"""
     if not os.path.exists(GURBANI_DB):
-        st.error(f"❌ Database not found: {GURBANI_DB}")
-        st.stop()
+        st.info("📥 Downloading Gurbani database... (one-time only, ~135 MB)")
+        try:
+            import urllib.request
+            db_url = "https://github.com/Siracha777/gurbani-finder/releases/download/v1.0.0/gurbani.json"
+            
+            # Download with progress
+            with st.spinner("Downloading database..."):
+                urllib.request.urlretrieve(db_url, GURBANI_DB)
+            st.success("✅ Database downloaded!")
+        except Exception as e:
+            st.error(f"❌ Failed to download database: {e}")
+            st.stop()
+    
     with open(GURBANI_DB, 'r', encoding='utf-8') as f:
         return json.load(f)
 
