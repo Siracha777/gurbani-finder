@@ -1,14 +1,14 @@
 """
-MOBILE-FRIENDLY GURBANI APP - Streamlit Version
-================================================
-Access from phone browser: http://your-ip:8501
+MOBILE-FRIENDLY GURBANI APP - Streamlit Cloud Compatible
+=========================================================
+Access from phone browser anywhere in the world!
 """
 
 import streamlit as st
 import json
 import os
 import tempfile
-from faster_whisper import WhisperModel
+import whisper  # Changed from faster-whisper
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 import re
@@ -24,12 +24,10 @@ st.set_page_config(
 # ===== CUSTOM CSS FOR MOBILE =====
 st.markdown("""
 <style>
-    /* Make text larger for mobile */
     .stMarkdown {
         font-size: 18px;
     }
     
-    /* Gurmukhi text - larger and bold */
     .gurmukhi {
         font-size: 24px;
         font-weight: bold;
@@ -37,28 +35,20 @@ st.markdown("""
         line-height: 1.6;
     }
     
-    /* English translation */
     .english {
         font-size: 18px;
         color: #374151;
         margin-top: 8px;
     }
     
-    /* Page number */
     .page-info {
         font-size: 16px;
         color: #6B7280;
         font-weight: 600;
     }
     
-    /* Star ratings */
     .stars {
         font-size: 20px;
-    }
-    
-    /* Upload button */
-    .uploadedFile {
-        font-size: 16px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -75,7 +65,6 @@ def load_database():
             import urllib.request
             db_url = "https://github.com/Siracha777/gurbani-finder/releases/download/v1.0.0/gurbani.json"
             
-            # Download with progress
             with st.spinner("Downloading database..."):
                 urllib.request.urlretrieve(db_url, GURBANI_DB)
             st.success("✅ Database downloaded!")
@@ -89,7 +78,7 @@ def load_database():
 @st.cache_resource
 def load_whisper_model():
     """Load Whisper model once and cache it"""
-    return WhisperModel("small", device="cpu")
+    return whisper.load_model("small")
 
 # ===== HELPER FUNCTIONS =====
 def clean_gurmukhi_text(text):
@@ -102,13 +91,8 @@ def clean_gurmukhi_text(text):
 def transcribe_audio(audio_file):
     """Transcribe audio to Devanagari"""
     model = load_whisper_model()
-    segments, info = model.transcribe(audio_file, language="pa")
-    
-    transcription = ""
-    for segment in segments:
-        transcription += segment.text + " "
-    
-    return transcription.strip()
+    result = model.transcribe(audio_file, language="pa")
+    return result["text"].strip()
 
 def convert_to_gurmukhi(devanagari_text):
     """Convert Devanagari to Gurmukhi"""
@@ -165,7 +149,6 @@ tab1, tab2 = st.tabs(["📤 Upload Audio", "🔤 Search Text"])
 with tab1:
     st.markdown("### Upload Gurbani Audio Recording")
     
-    # File uploader
     audio_file = st.file_uploader(
         "Choose an audio file (m4a, mp3, wav)",
         type=['m4a', 'mp3', 'wav', 'ogg'],
@@ -173,36 +156,29 @@ with tab1:
     )
     
     if audio_file is not None:
-        # Show audio player
         st.audio(audio_file)
         
-        # Process button
         if st.button("🔍 Find in Guru Granth Sahib", type="primary", use_container_width=True):
             with st.spinner("Processing audio..."):
-                # Save to temp file
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as tmp_file:
                     tmp_file.write(audio_file.read())
                     tmp_path = tmp_file.name
                 
                 try:
-                    # Step 1: Transcribe
                     with st.status("Transcribing audio...", expanded=True) as status:
                         st.write("🎤 Listening to audio...")
                         devanagari = transcribe_audio(tmp_path)
                         st.write(f"📝 Transcribed: {devanagari[:100]}...")
                         
-                        # Step 2: Convert
                         st.write("🔄 Converting to Gurmukhi...")
                         gurmukhi = convert_to_gurmukhi(devanagari)
                         st.write(f"✨ Gurmukhi: {gurmukhi[:100]}...")
                         
-                        # Step 3: Search
                         st.write("🔍 Searching database...")
                         results = search_gurbani(gurmukhi, limit=5)
                         
                         status.update(label="✅ Processing complete!", state="complete")
                     
-                    # Display results
                     if results:
                         st.success(f"Found {len(results)} match(es)!")
                         
@@ -223,7 +199,6 @@ with tab1:
                     st.error(f"Error: {str(e)}")
                 
                 finally:
-                    # Clean up temp file
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
 
@@ -260,6 +235,5 @@ with tab2:
         else:
             st.warning("Please enter text to search.")
 
-# ===== FOOTER =====
 st.markdown("---")
 st.markdown("💡 **Tip:** For best results, record in a quiet environment with clear audio.")
