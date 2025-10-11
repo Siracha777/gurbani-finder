@@ -52,6 +52,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===== GOOGLE SPEECH-TO-TEXT =====
+def convert_audio_for_google(audio_file_path):
+    """Convert audio to format Google accepts (16kHz, mono, WAV)"""
+    try:
+        from pydub import AudioSegment
+        
+        # Load audio (handles m4a, mp3, etc.)
+        audio = AudioSegment.from_file(audio_file_path)
+        
+        # Convert to mono
+        if audio.channels > 1:
+            audio = audio.set_channels(1)
+        
+        # Set sample rate to 16kHz
+        audio = audio.set_frame_rate(16000)
+        
+        # Export as WAV
+        output_path = tempfile.mktemp(suffix='.wav')
+        audio.export(output_path, format='wav')
+        
+        return output_path
+    except Exception as e:
+        st.error(f"Audio conversion failed: {e}")
+        return None
+
 def transcribe_with_google(audio_file_path):
     """
     Ultra fast transcription using Google Speech-to-Text API
@@ -66,9 +90,18 @@ def transcribe_with_google(audio_file_path):
             st.info("Please add GOOGLE_API_KEY to your Streamlit app secrets.")
             return None
         
-        # Read audio file
-        with open(audio_file_path, 'rb') as audio_file:
+        # Convert audio to correct format
+        converted_path = convert_audio_for_google(audio_file_path)
+        if not converted_path:
+            return None
+        
+        # Read converted audio file
+        with open(converted_path, 'rb') as audio_file:
             audio_content = base64.b64encode(audio_file.read()).decode('utf-8')
+        
+        # Clean up converted file
+        if os.path.exists(converted_path):
+            os.remove(converted_path)
         
         # Prepare API request
         url = f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}"
@@ -76,6 +109,7 @@ def transcribe_with_google(audio_file_path):
         payload = {
             "config": {
                 "encoding": "LINEAR16",
+                "sampleRateHertz": 16000,
                 "languageCode": "pa-IN",  # Punjabi (India)
                 "alternativeLanguageCodes": ["hi-IN"],  # Hindi as fallback
                 "enableAutomaticPunctuation": True,
@@ -96,7 +130,7 @@ def transcribe_with_google(audio_file_path):
                 transcript = result['results'][0]['alternatives'][0]['transcript']
                 return transcript
             else:
-                st.warning("No speech detected in audio. Try recording again.")
+                st.warning("No speech detected in audio. Try recording again with clearer audio.")
                 return None
         else:
             st.error(f"API Error: {response.status_code} - {response.text}")
