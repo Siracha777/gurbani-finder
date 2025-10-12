@@ -155,7 +155,7 @@ def convert_to_gurmukhi(devanagari_text):
 
 # ===== SIKHITOTHEMAX API SEARCH =====
 def search_sttm_api(query_text, limit=5):
-    """Search using SikhiToTheMax API"""
+    """Search using SikhiToTheMax API with fuzzy matching"""
     try:
         query_text = clean_gurmukhi_text(query_text)
         words = [w for w in query_text.split() if len(w) > 2]
@@ -163,45 +163,68 @@ def search_sttm_api(query_text, limit=5):
         if not words:
             return []
         
-        # Use first 3-4 words for best results
-        search_query = " ".join(words[:4])
+        all_results = []
         
-        url = "https://api.banidb.com/v2/search"
-        params = {
-            'q': search_query,
-            'searchtype': 'first-letters-anywhere',
-            'source': 'all',
-            'limit': limit
-        }
+        # Try multiple search strategies
+        search_queries = [
+            " ".join(words[:5]),      # First 5 words
+            " ".join(words[:3]),      # First 3 words  
+            " ".join(words[1:4]),     # Middle words
+        ]
         
-        response = requests.get(url, params=params, timeout=10)
+        # Remove duplicates
+        search_queries = list(dict.fromkeys(search_queries))
         
-        if response.status_code == 200:
-            data = response.json()
-            results = []
+        for search_query in search_queries:
+            url = "https://api.banidb.com/v2/search"
+            params = {
+                'q': search_query,
+                'searchtype': 'first-letters-anywhere',
+                'source': 'all',
+                'limit': 10
+            }
             
-            if 'verses' in data and data['verses']:
-                for verse in data['verses']:
-                    gurmukhi = verse.get('verse', {}).get('gurmukhi', '')
-                    
-                    english = ""
-                    translations = verse.get('verse', {}).get('translation', {})
-                    if 'en' in translations:
-                        english = translations['en'].get('bdb', '')
-                    
-                    page = verse.get('verse', {}).get('pageNum', '')
-                    line = verse.get('lineNum', '')
-                    
-                    results.append({
-                        'gurmukhi': gurmukhi,
-                        'english': english,
-                        'page': page,
-                        'line': line
-                    })
+            response = requests.get(url, params=params, timeout=10)
             
-            return results[:limit]
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'verses' in data and data['verses']:
+                    for verse in data['verses']:
+                        gurmukhi = verse.get('verse', {}).get('gurmukhi', '')
+                        
+                        # Calculate similarity score
+                        from difflib import SequenceMatcher
+                        similarity = SequenceMatcher(None, query_text.lower(), gurmukhi.lower()).ratio()
+                        
+                        english = ""
+                        translations = verse.get('verse', {}).get('translation', {})
+                        if 'en' in translations:
+                            english = translations['en'].get('bdb', '')
+                        
+                        page = verse.get('verse', {}).get('pageNum', '')
+                        line = verse.get('lineNum', '')
+                        
+                        all_results.append({
+                            'gurmukhi': gurmukhi,
+                            'english': english,
+                            'page': page,
+                            'line': line,
+                            'similarity': similarity
+                        })
         
-        return []
+        # Remove duplicates and sort by similarity
+        seen = set()
+        unique_results = []
+        for r in all_results:
+            if r['gurmukhi'] not in seen:
+                seen.add(r['gurmukhi'])
+                unique_results.append(r)
+        
+        # Sort by similarity score
+        unique_results.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        return unique_results[:limit]
     
     except Exception as e:
         st.error(f"Search error: {str(e)}")
@@ -269,8 +292,12 @@ with tab1:
                         st.success(f"✅ Found {len(results)} match(es)!")
                         
                         for i, result in enumerate(results, 1):
+                            # Show similarity score
+                            similarity_pct = int(result.get('similarity', 0) * 100)
+                            confidence = "🟢" if similarity_pct > 70 else "🟡" if similarity_pct > 50 else "🔴"
+                            
                             with st.container():
-                                st.markdown(f"### 📖 Result {i}")
+                                st.markdown(f"### 📖 Result {i} {confidence} {similarity_pct}% match")
                                 st.markdown(f'<div class="gurmukhi">{result["gurmukhi"]}</div>', unsafe_allow_html=True)
                                 if result['english']:
                                     st.markdown(f'<div class="english">{result["english"]}</div>', unsafe_allow_html=True)
