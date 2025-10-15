@@ -139,66 +139,164 @@ def search_gurbani(query_text, limit=15):
 
 # ===== MAIN APP =====
 st.title("🙏 Gurbani Scripture Finder")
-st.markdown("**Paste Gurmukhi text and find it in Guru Granth Sahib Ji**")
+st.markdown("**Listen to Gurbani → Get Gurmukhi Text → Search Scripture**")
 st.markdown("---")
 
-# ===== SEARCH INPUT =====
-st.markdown("### Paste Gurmukhi Text Below")
-st.markdown("💡 **How to get Gurmukhi text:**")
-st.markdown("1. Record Gurbani on your phone or find lyrics online")
-st.markdown("2. Use a Gurmukhi keyboard app to type what you hear")
-st.markdown("3. Copy and paste here")
+# ===== TABS =====
+tab1, tab2 = st.tabs(["🎤 Audio to Gurmukhi", "🔍 Search Scripture"])
 
-search_text = st.text_area(
-    "Enter Gurmukhi text:",
-    placeholder="ਗਹਿ ਭੁਜਾ ਲੀਨੇ. ਦਇਆ ਕੀਨੇ; ਆਪਨੇ ਕਰਿ ਮਾਨਿਆ ॥",
-    height=100,
-    label_visibility="collapsed"
-)
-
-# ===== SEARCH BUTTON =====
-if st.button("🔍 Find in Guru Granth Sahib", type="primary", use_container_width=True):
-    if search_text.strip():
-        with st.spinner("Searching..."):
-            results = search_gurbani(search_text, limit=15)
+# ===== TAB 1: AUDIO TO GURMUKHI =====
+with tab1:
+    st.markdown("### Step 1: Convert Audio to Gurmukhi Text")
+    st.markdown("Record Gurbani on your phone and upload here to get the Gurmukhi text")
+    
+    audio_file = st.file_uploader(
+        "Choose audio file",
+        type=['m4a', 'mp3', 'wav', 'ogg'],
+        label_visibility="collapsed"
+    )
+    
+    if audio_file is not None:
+        st.audio(audio_file)
         
-        st.markdown("---")
-        
-        if results:
-            st.success(f"✅ Found {len(results)} match(es)!")
-            st.markdown("")
+        if st.button("🎤 Convert to Gurmukhi Text", type="primary", use_container_width=True):
+            import tempfile
+            import os
+            from indic_transliteration import sanscript
+            from indic_transliteration.sanscript import transliterate
+            import base64
             
-            for i, result in enumerate(results, 1):
-                sim_pct = int(result['similarity'] * 100)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as tmp:
+                tmp.write(audio_file.read())
+                tmp_path = tmp.name
+            
+            try:
+                # Convert audio
+                try:
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_file(tmp_path)
+                    if audio.channels > 1:
+                        audio = audio.set_channels(1)
+                    audio = audio.set_frame_rate(16000)
+                    converted_path = tempfile.mktemp(suffix='.wav')
+                    audio.export(converted_path, format='wav')
+                except Exception as e:
+                    st.error(f"Audio conversion error: {e}")
+                    converted_path = tmp_path
                 
-                # Color indicator
-                if sim_pct >= 85:
-                    emoji = "🟢"
-                    label = "Exact Match"
-                elif sim_pct >= 70:
-                    emoji = "🟡"
-                    label = "Good Match"
-                elif sim_pct >= 50:
-                    emoji = "🟠"
-                    label = "Possible Match"
+                # Transcribe with Google
+                api_key = st.secrets.get("GOOGLE_API_KEY", "")
+                if not api_key:
+                    st.error("Google API key not configured in Streamlit secrets")
                 else:
-                    emoji = "🔴"
-                    label = "Distant Match"
+                    with open(converted_path, 'rb') as f:
+                        audio_content = base64.b64encode(f.read()).decode('utf-8')
+                    
+                    with st.spinner("Transcribing audio..."):
+                        url = f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}"
+                        payload = {
+                            "config": {
+                                "encoding": "LINEAR16",
+                                "sampleRateHertz": 16000,
+                                "languageCode": "pa-IN",
+                                "alternativeLanguageCodes": ["hi-IN"],
+                                "enableAutomaticPunctuation": True,
+                            },
+                            "audio": {"content": audio_content}
+                        }
+                        
+                        response = requests.post(url, json=payload, timeout=30)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if 'results' in result and result['results']:
+                            transcript = result['results'][0]['alternatives'][0]['transcript']
+                            confidence = result['results'][0]['alternatives'][0].get('confidence', 0)
+                            
+                            st.success(f"✅ Transcribed (confidence: {confidence:.0%})")
+                            
+                            # Convert to Gurmukhi
+                            with st.spinner("Converting to Gurmukhi..."):
+                                gurmukhi = transliterate(transcript, sanscript.DEVANAGARI, sanscript.GURMUKHI)
+                                gurmukhi = clean_gurmukhi_text(gurmukhi)
+                            
+                            st.success("✅ Converted to Gurmukhi")
+                            
+                            # Display result in highlighted box
+                            st.markdown("### Your Gurmukhi Text:")
+                            st.markdown(f'<div class="gurmukhi">{gurmukhi}</div>', unsafe_allow_html=True)
+                            
+                            # Copy button
+                            st.code(gurmukhi, language="text")
+                            st.markdown("☝️ **Copy the text above**")
+                            st.markdown("Then go to the **'Search Scripture'** tab and paste it to find matches!")
+                        else:
+                            st.warning("No speech detected in audio")
+                    else:
+                        st.error(f"API Error: {response.status_code}")
                 
-                with st.container():
-                    st.markdown(f"### {emoji} Result {i} - {label} ({sim_pct}%)")
-                    st.markdown(f'<div class="gurmukhi">{result["gurmukhi"]}</div>', unsafe_allow_html=True)
+                if os.path.exists(converted_path) and converted_path != tmp_path:
+                    os.remove(converted_path)
+            
+            except Exception as e:
+                st.error(f"Error: {e}")
+            
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+# ===== TAB 2: SEARCH SCRIPTURE =====
+with tab2:
+    st.markdown("### Step 2: Search Scripture")
+    st.markdown("Paste the Gurmukhi text from Step 1 (or any Gurmukhi text) to find matches")
+    
+    search_text = st.text_area(
+        "Paste Gurmukhi text here:",
+        placeholder="ਗਹਿ ਭੁਜਾ ਲੀਨੇ. ਦਇਆ ਕੀਨੇ; ਆਪਨੇ ਕਰਿ ਮਾਨਿਆ ॥",
+        height=100,
+        label_visibility="collapsed"
+    )
+    
+    if st.button("🔍 Search Scripture", type="primary", use_container_width=True):
+        if search_text.strip():
+            with st.spinner("Searching..."):
+                results = search_gurbani(search_text, limit=15)
+            
+            st.markdown("---")
+            
+            if results:
+                st.success(f"✅ Found {len(results)} match(es)!")
+                st.markdown("")
+                
+                for i, result in enumerate(results, 1):
+                    sim_pct = int(result['similarity'] * 100)
                     
-                    if result['english']:
-                        st.markdown(f'<div class="english">🇬🇧 {result["english"]}</div>', unsafe_allow_html=True)
+                    if sim_pct >= 85:
+                        emoji = "🟢"
+                        label = "Exact Match"
+                    elif sim_pct >= 70:
+                        emoji = "🟡"
+                        label = "Good Match"
+                    elif sim_pct >= 50:
+                        emoji = "🟠"
+                        label = "Possible Match"
+                    else:
+                        emoji = "🔴"
+                        label = "Distant Match"
                     
-                    st.markdown(f'<div class="page-info">📄 Ang (Page) {result["page"]}</div>', unsafe_allow_html=True)
-                    st.divider()
+                    with st.container():
+                        st.markdown(f"### {emoji} Result {i} - {label} ({sim_pct}%)")
+                        st.markdown(f'<div class="gurmukhi">{result["gurmukhi"]}</div>', unsafe_allow_html=True)
+                        
+                        if result['english']:
+                            st.markdown(f'<div class="english">🇬🇧 {result["english"]}</div>', unsafe_allow_html=True)
+                        
+                        st.markdown(f'<div class="page-info">📄 Ang (Page) {result["page"]}</div>', unsafe_allow_html=True)
+                        st.divider()
+            else:
+                st.warning("No matches found")
         else:
-            st.warning("❌ No matches found")
-            st.info("💡 Try searching for a shorter phrase or different words from what you heard")
-    else:
-        st.warning("Please enter Gurmukhi text to search")
+            st.warning("Please paste Gurmukhi text to search")
 
 # ===== FOOTER =====
 st.markdown("---")
