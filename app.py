@@ -143,7 +143,7 @@ st.markdown("**Listen to Gurbani → Get Gurmukhi Text → Search Scripture**")
 st.markdown("---")
 
 # ===== TABS =====
-tab1, tab2 = st.tabs(["🎤 Audio to Gurmukhi", "🔍 Search Scripture"])
+tab1, tab2, tab3 = st.tabs(["🎤 Audio to Gurmukhi", "🔍 Text Search", "⚡ Fast Local Search"])
 
 # ===== TAB 1: AUDIO TO GURMUKHI =====
 with tab1:
