@@ -171,48 +171,49 @@ with tab1:
                 tmp_path = tmp.name
             
             try:
-                # Convert audio
-                try:
-                    from pydub import AudioSegment
-                    audio = AudioSegment.from_file(tmp_path)
-                    if audio.channels > 1:
-                        audio = audio.set_channels(1)
-                    audio = audio.set_frame_rate(16000)
-                    converted_path = tempfile.mktemp(suffix='.wav')
-                    audio.export(converted_path, format='wav')
-                except Exception as e:
-                    st.error(f"Audio conversion error: {e}")
-                    converted_path = tmp_path
+                # Skip pydub conversion - send directly to Google
+                with open(tmp_path, 'rb') as f:
+                    audio_content = base64.b64encode(f.read()).decode('utf-8')
                 
                 # Transcribe with Google
                 api_key = st.secrets.get("GOOGLE_API_KEY", "")
                 if not api_key:
                     st.error("Google API key not configured in Streamlit secrets")
                 else:
-                    with open(converted_path, 'rb') as f:
-                        audio_content = base64.b64encode(f.read()).decode('utf-8')
-                    
                     with st.spinner("Transcribing audio..."):
                         url = f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}"
-                        payload = {
-                            "config": {
-                                "encoding": "LINEAR16",
-                                "sampleRateHertz": 16000,
-                                "languageCode": "pa-IN",
-                                "alternativeLanguageCodes": ["hi-IN"],
-                                "enableAutomaticPunctuation": True,
-                            },
-                            "audio": {"content": audio_content}
-                        }
                         
-                        response = requests.post(url, json=payload, timeout=30)
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        if 'results' in result and result['results']:
-                            transcript = result['results'][0]['alternatives'][0]['transcript']
-                            confidence = result['results'][0]['alternatives'][0].get('confidence', 0)
+                        # Try different encodings for different file types
+                        configs = [
+                            {"encoding": "OGG_OPUS"},
+                            {"encoding": "MP3"},
+                            {"encoding": "FLAC"},
+                        ]
+                        
+                        transcript = None
+                        confidence = 0
+                        
+                        for config in configs:
+                            payload = {
+                                "config": {
+                                    **config,
+                                    "languageCode": "pa-IN",
+                                    "alternativeLanguageCodes": ["hi-IN"],
+                                    "enableAutomaticPunctuation": True,
+                                },
+                                "audio": {"content": audio_content}
+                            }
                             
+                            response = requests.post(url, json=payload, timeout=30)
+                            
+                            if response.status_code == 200:
+                                result = response.json()
+                                if 'results' in result and result['results']:
+                                    transcript = result['results'][0]['alternatives'][0]['transcript']
+                                    confidence = result['results'][0]['alternatives'][0].get('confidence', 0)
+                                    break
+                        
+                        if transcript:
                             st.success(f"✅ Transcribed (confidence: {confidence:.0%})")
                             
                             # Convert to Gurmukhi
@@ -222,22 +223,17 @@ with tab1:
                             
                             st.success("✅ Converted to Gurmukhi")
                             
-                            # Display result in highlighted box
+                            # Display result
                             st.markdown("### Your Gurmukhi Text:")
                             st.markdown(f'<div class="gurmukhi">{gurmukhi}</div>', unsafe_allow_html=True)
                             
                             # Copy button
                             st.code(gurmukhi, language="text")
                             st.markdown("☝️ **Copy the text above**")
-                            st.markdown("Then go to the **'Search Scripture'** tab and paste it to find matches!")
+                            st.markdown("Then go to the **'Text Search'** tab and paste it to find matches!")
                         else:
-                            st.warning("No speech detected in audio")
-                    else:
-                        st.error(f"API Error: {response.status_code}")
+                            st.warning("No speech detected in audio. Try recording again with clearer audio.")
                 
-                if os.path.exists(converted_path) and converted_path != tmp_path:
-                    os.remove(converted_path)
-            
             except Exception as e:
                 st.error(f"Error: {e}")
             
