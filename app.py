@@ -164,75 +164,62 @@ with tab1:
             import os
             from indic_transliteration import sanscript
             from indic_transliteration.sanscript import transliterate
-            import base64
             
             with tempfile.NamedTemporaryFile(delete=False, suffix='.m4a') as tmp:
                 tmp.write(audio_file.read())
                 tmp_path = tmp.name
             
             try:
-                # Skip pydub conversion - send directly to Google
-                with open(tmp_path, 'rb') as f:
-                    audio_content = base64.b64encode(f.read()).decode('utf-8')
-                
-                # Transcribe with Google
-                api_key = st.secrets.get("GOOGLE_API_KEY", "")
-                if not api_key:
-                    st.error("Google API key not configured in Streamlit secrets")
+                # Use OpenAI Whisper API
+                openai_key = st.secrets.get("OPENAI_API_KEY", "")
+                if not openai_key:
+                    st.error("OpenAI API key not configured in Streamlit secrets")
                 else:
-                    with st.spinner("Transcribing audio..."):
-                        url = f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}"
-                        
-                        # Try different encodings for different file types
-                        configs = [
-                            {"encoding": "OGG_OPUS"},
-                            {"encoding": "MP3"},
-                            {"encoding": "FLAC"},
-                        ]
-                        
-                        transcript = None
-                        confidence = 0
-                        
-                        for config in configs:
-                            payload = {
-                                "config": {
-                                    **config,
-                                    "languageCode": "pa-IN",
-                                    "alternativeLanguageCodes": ["hi-IN"],
-                                    "enableAutomaticPunctuation": True,
-                                },
-                                "audio": {"content": audio_content}
+                    with st.spinner("Transcribing with OpenAI Whisper..."):
+                        # Upload file to OpenAI Whisper
+                        with open(tmp_path, 'rb') as audio:
+                            files = {'file': audio}
+                            headers = {'Authorization': f'Bearer {openai_key}'}
+                            data = {
+                                'model': 'whisper-1',
+                                'language': 'pa',  # Punjabi
+                                'response_format': 'json'
                             }
                             
-                            response = requests.post(url, json=payload, timeout=30)
-                            
-                            if response.status_code == 200:
-                                result = response.json()
-                                if 'results' in result and result['results']:
-                                    transcript = result['results'][0]['alternatives'][0]['transcript']
-                                    confidence = result['results'][0]['alternatives'][0].get('confidence', 0)
-                                    break
+                            response = requests.post(
+                                'https://api.openai.com/v1/audio/transcriptions',
+                                headers=headers,
+                                files=files,
+                                data=data,
+                                timeout=60
+                            )
                         
-                        if transcript:
-                            st.success(f"✅ Transcribed (confidence: {confidence:.0%})")
+                        if response.status_code == 200:
+                            result = response.json()
+                            transcript = result.get('text', '')
                             
-                            # Convert to Gurmukhi
-                            with st.spinner("Converting to Gurmukhi..."):
-                                gurmukhi = transliterate(transcript, sanscript.DEVANAGARI, sanscript.GURMUKHI)
-                                gurmukhi = clean_gurmukhi_text(gurmukhi)
-                            
-                            st.success("✅ Converted to Gurmukhi")
-                            
-                            # Display result
-                            st.markdown("### Your Gurmukhi Text:")
-                            st.markdown(f'<div class="gurmukhi">{gurmukhi}</div>', unsafe_allow_html=True)
-                            
-                            # Copy button
-                            st.code(gurmukhi, language="text")
-                            st.markdown("☝️ **Copy the text above**")
-                            st.markdown("Then go to the **'Text Search'** tab and paste it to find matches!")
+                            if transcript:
+                                st.success(f"✅ Transcribed successfully!")
+                                
+                                # Convert to Gurmukhi
+                                with st.spinner("Converting to Gurmukhi..."):
+                                    gurmukhi = transliterate(transcript, sanscript.DEVANAGARI, sanscript.GURMUKHI)
+                                    gurmukhi = clean_gurmukhi_text(gurmukhi)
+                                
+                                st.success("✅ Converted to Gurmukhi")
+                                
+                                # Display result
+                                st.markdown("### Your Gurmukhi Text:")
+                                st.markdown(f'<div class="gurmukhi">{gurmukhi}</div>', unsafe_allow_html=True)
+                                
+                                # Copy button
+                                st.code(gurmukhi, language="text")
+                                st.markdown("☝️ **Copy the text above**")
+                                st.markdown("Then go to the **'Text Search'** tab and paste it to find matches!")
+                            else:
+                                st.warning("No speech detected in audio")
                         else:
-                            st.warning("No speech detected in audio. Try recording again with clearer audio.")
+                            st.error(f"API Error: {response.status_code} - {response.text}")
                 
             except Exception as e:
                 st.error(f"Error: {e}")
