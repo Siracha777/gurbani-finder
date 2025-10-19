@@ -182,7 +182,8 @@ with tab1:
                             headers = {'Authorization': f'Bearer {openai_key}'}
                             data = {
                                 'model': 'whisper-1',
-                                'language': 'pa',  # Punjabi
+                                # Let Whisper auto-detect language (works better for Punjabi)
+                                # 'language': 'hi',  # Can try Hindi if needed
                                 'response_format': 'json'
                             }
                             
