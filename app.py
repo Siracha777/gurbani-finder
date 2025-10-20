@@ -176,14 +176,16 @@ with tab1:
                     st.error("OpenAI API key not configured in Streamlit secrets")
                 else:
                     with st.spinner("Transcribing with OpenAI Whisper..."):
-                        # Upload file to OpenAI Whisper
-                        with open(tmp_path, 'rb') as audio:
-                            files = {'file': audio}
-                            headers = {'Authorization': f'Bearer {openai_key}'}
+                        # Upload file to OpenAI Whisper with proper format
+                        with open(tmp_path, 'rb') as audio_file:
+                            files = {
+                                'file': ('audio.m4a', audio_file, 'audio/m4a')
+                            }
+                            headers = {
+                                'Authorization': f'Bearer {openai_key}'
+                            }
                             data = {
                                 'model': 'whisper-1',
-                                # Let Whisper auto-detect language (works better for Punjabi)
-                                # 'language': 'hi',  # Can try Hindi if needed
                                 'response_format': 'json'
                             }
                             
