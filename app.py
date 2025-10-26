@@ -1,17 +1,18 @@
 """
-GURBANI SCRIPTURE FINDER - Text Search Only
-============================================
-Paste Gurmukhi text → Get instant results with translations
+SMART GURBANI IDENTIFIER
+========================
+Practical approach: Audio → Suggestions → Pick One → Full Shabad
 """
 
 import streamlit as st
 import requests
 import re
 from difflib import SequenceMatcher
+import time
 
 # ===== PAGE CONFIG =====
 st.set_page_config(
-    page_title="🙏 Gurbani Finder",
+    page_title="🙏 Gurbani Identifier",
     page_icon="🙏",
     layout="centered"
 )
@@ -20,38 +21,45 @@ st.set_page_config(
 st.markdown("""
 <style>
     .gurmukhi {
-        font-size: 28px;
+        font-size: 24px;
         font-weight: bold;
         color: #0F172A;
         background: #F0F9FF;
-        padding: 15px;
-        border-radius: 8px;
+        padding: 12px;
+        border-radius: 6px;
         line-height: 1.8;
-        margin: 15px 0;
+        margin: 10px 0;
         border-left: 4px solid #1E3A8A;
     }
     .english {
-        font-size: 20px;
+        font-size: 18px;
         color: #1F2937;
         background: #F3F4F6;
-        padding: 12px;
-        border-radius: 6px;
-        margin-top: 10px;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 8px 0;
         line-height: 1.6;
     }
     .page-info {
-        font-size: 18px;
+        font-size: 16px;
         color: #374151;
         background: #E5E7EB;
-        padding: 10px;
-        border-radius: 6px;
+        padding: 8px;
+        border-radius: 5px;
         font-weight: 600;
-        margin-top: 10px;
+        margin: 8px 0;
     }
-    .stButton button {
-        font-size: 18px;
+    .shabad-card {
+        background: #F9FAFB;
+        border: 2px solid #E5E7EB;
+        border-radius: 8px;
         padding: 15px;
-        width: 100%;
+        margin: 15px 0;
+        cursor: pointer;
+    }
+    .shabad-card:hover {
+        border-color: #3B82F6;
+        background: #EFF6FF;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,8 +72,8 @@ def clean_gurmukhi_text(text):
     cleaned = ''.join(char for char in text if '\u0A00' <= char <= '\u0A7F' or char.isspace())
     return cleaned.strip()
 
-def search_gurbani(query_text, limit=15):
-    """Search SikhiToTheMax API for Gurmukhi text"""
+def search_shabads_fuzzy(query_text, limit=10):
+    """Search for shabads with fuzzy matching - return multiple suggestions"""
     try:
         query_text = clean_gurmukhi_text(query_text)
         words = [w for w in query_text.split() if len(w) > 1]
@@ -74,14 +82,14 @@ def search_gurbani(query_text, limit=15):
             return []
         
         results = []
+        seen_shabads = {}
         
-        # Try different word combinations
+        # Search with different word combinations
         search_patterns = [
             " ".join(words[:6]),
             " ".join(words[:4]),
             " ".join(words[:3]),
             " ".join(words[1:4]) if len(words) > 3 else None,
-            " ".join(words[-3:]) if len(words) > 3 else None,
         ]
         
         for pattern in search_patterns:
@@ -102,64 +110,91 @@ def search_gurbani(query_text, limit=15):
                 data = response.json()
                 if 'verses' in data and data['verses']:
                     for verse in data['verses']:
-                        gurmukhi = verse.get('verse', {}).get('gurmukhi', '')
+                        shabad_id = verse.get('verse', {}).get('shabadId')
                         
-                        # Calculate similarity
-                        similarity = SequenceMatcher(None, query_text.lower(), gurmukhi.lower()).ratio()
-                        
-                        # Get English translation
-                        english = ""
-                        translations = verse.get('verse', {}).get('translation', {})
-                        if 'en' in translations:
-                            english = translations['en'].get('bdb', '')
-                        
-                        page = verse.get('verse', {}).get('pageNum', '')
-                        
-                        results.append({
-                            'gurmukhi': gurmukhi,
-                            'english': english,
-                            'page': page,
-                            'similarity': similarity
-                        })
+                        if shabad_id and shabad_id not in seen_shabads:
+                            gurmukhi = verse.get('verse', {}).get('gurmukhi', '')
+                            
+                            # Calculate similarity
+                            similarity = SequenceMatcher(None, query_text.lower(), gurmukhi.lower()).ratio()
+                            
+                            english = ""
+                            translations = verse.get('verse', {}).get('translation', {})
+                            if 'en' in translations:
+                                english = translations['en'].get('bdb', '')
+                            
+                            page = verse.get('verse', {}).get('pageNum', '')
+                            
+                            seen_shabads[shabad_id] = {
+                                'shabad_id': shabad_id,
+                                'first_line': gurmukhi,
+                                'english': english,
+                                'page': page,
+                                'similarity': similarity
+                            }
         
-        # Remove duplicates and sort by similarity
-        seen = set()
-        unique = []
-        for r in results:
-            if r['gurmukhi'] not in seen:
-                seen.add(r['gurmukhi'])
-                unique.append(r)
-        
-        unique.sort(key=lambda x: x['similarity'], reverse=True)
-        return unique[:limit]
+        # Sort by similarity and return top matches
+        results = list(seen_shabads.values())
+        results.sort(key=lambda x: x['similarity'], reverse=True)
+        return results[:limit]
     
     except Exception as e:
         st.error(f"Search error: {e}")
         return []
 
+def get_full_shabad(shabad_id):
+    """Get complete shabad by ID"""
+    try:
+        url = f"https://api.banidb.com/v2/shabads/{shabad_id}"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            verses = []
+            
+            if 'verses' in data:
+                for verse in data['verses']:
+                    gurmukhi = verse.get('verse', {}).get('gurmukhi', '')
+                    
+                    english = ""
+                    translations = verse.get('verse', {}).get('translation', {})
+                    if 'en' in translations:
+                        english = translations['en'].get('bdb', '')
+                    
+                    verses.append({
+                        'gurmukhi': gurmukhi,
+                        'english': english
+                    })
+            
+            return verses
+        return []
+    except Exception as e:
+        st.error(f"Error loading shabad: {e}")
+        return []
+
 # ===== MAIN APP =====
-st.title("🙏 Gurbani Scripture Finder")
-st.markdown("**Listen to Gurbani → Get Gurmukhi Text → Search Scripture**")
+st.title("🙏 Smart Gurbani Identifier")
+st.markdown("**Find any Gurbani shabad in seconds**")
 st.markdown("---")
 
 # ===== TABS =====
-tab1, tab2, tab3 = st.tabs(["🎤 Audio to Gurmukhi", "🔍 Text Search", "⚡ Fast Local Search"])
+tab1, tab2, tab3 = st.tabs(["🎤 Identify Shabad", "📚 Popular Shabads", "🔍 Text Search"])
 
-# ===== TAB 1: AUDIO TO GURMUKHI =====
+# ===== TAB 1: IDENTIFY SHABAD =====
 with tab1:
-    st.markdown("### Step 1: Convert Audio to Gurmukhi Text")
-    st.markdown("Record Gurbani on your phone and upload here to get the Gurmukhi text")
+    st.markdown("### 🎤 Identify What's Playing")
+    st.info("💡 **How it works:** Upload audio → Get 10 suggestions → Pick the right one → See full shabad!")
     
     audio_file = st.file_uploader(
-        "Choose audio file",
+        "Record 10-15 seconds of Gurbani",
         type=['m4a', 'mp3', 'wav', 'ogg'],
-        label_visibility="collapsed"
+        key="identify_audio"
     )
     
-    if audio_file is not None:
+    if audio_file:
         st.audio(audio_file)
         
-        if st.button("🎤 Convert to Gurmukhi Text", type="primary", use_container_width=True):
+        if st.button("🔍 Find This Shabad", type="primary", use_container_width=True):
             import tempfile
             import os
             from indic_transliteration import sanscript
@@ -170,135 +205,144 @@ with tab1:
                 tmp_path = tmp.name
             
             try:
-                # Use OpenAI Whisper API
-                openai_key = st.secrets.get("OPENAI_API_KEY", "")
-                if not openai_key:
-                    st.error("OpenAI API key not configured in Streamlit secrets")
+                assembly_key = st.secrets.get("ASSEMBLYAI_API_KEY", "")
+                
+                if not assembly_key:
+                    st.warning("AssemblyAI not configured. Using text search instead.")
+                    st.info("💡 Tip: Type what you hear below:")
                 else:
-                    with st.spinner("Transcribing with OpenAI Whisper..."):
-                        # Upload file to OpenAI Whisper with proper format
-                        with open(tmp_path, 'rb') as audio_file:
-                            files = {
-                                'file': ('audio.m4a', audio_file, 'audio/m4a')
-                            }
-                            headers = {
-                                'Authorization': f'Bearer {openai_key}'
-                            }
-                            data = {
-                                'model': 'whisper-1',
-                                'response_format': 'json'
-                            }
-                            
-                            response = requests.post(
-                                'https://api.openai.com/v1/audio/transcriptions',
+                    headers = {'authorization': assembly_key}
+                    
+                    with st.spinner("Listening to audio..."):
+                        # Upload
+                        with open(tmp_path, 'rb') as f:
+                            upload_response = requests.post(
+                                'https://api.assemblyai.com/v2/upload',
                                 headers=headers,
-                                files=files,
-                                data=data,
-                                timeout=60
+                                files={'file': f}
                             )
                         
-                        if response.status_code == 200:
-                            result = response.json()
-                            transcript = result.get('text', '')
+                        if upload_response.status_code == 200:
+                            audio_url = upload_response.json()['upload_url']
                             
-                            if transcript:
-                                st.success(f"✅ Transcribed successfully!")
-                                
-                                # Convert to Gurmukhi
-                                with st.spinner("Converting to Gurmukhi..."):
-                                    gurmukhi = transliterate(transcript, sanscript.DEVANAGARI, sanscript.GURMUKHI)
-                                    gurmukhi = clean_gurmukhi_text(gurmukhi)
-                                
-                                st.success("✅ Converted to Gurmukhi")
-                                
-                                # Display result
-                                st.markdown("### Your Gurmukhi Text:")
-                                st.markdown(f'<div class="gurmukhi">{gurmukhi}</div>', unsafe_allow_html=True)
-                                
-                                # Copy button
-                                st.code(gurmukhi, language="text")
-                                st.markdown("☝️ **Copy the text above**")
-                                st.markdown("Then go to the **'Text Search'** tab and paste it to find matches!")
-                            else:
-                                st.warning("No speech detected in audio")
-                        else:
-                            st.error(f"API Error: {response.status_code} - {response.text}")
-                
+                            # Transcribe
+                            transcript_response = requests.post(
+                                'https://api.assemblyai.com/v2/transcript',
+                                json={'audio_url': audio_url, 'language_code': 'hi'},
+                                headers=headers
+                            )
+                            
+                            transcript_id = transcript_response.json()['id']
+                            polling_endpoint = f'https://api.assemblyai.com/v2/transcript/{transcript_id}'
+                            
+                            with st.spinner("Finding matching shabads (30 sec)..."):
+                                while True:
+                                    result = requests.get(polling_endpoint, headers=headers)
+                                    status = result.json()['status']
+                                    
+                                    if status == 'completed':
+                                        transcript = result.json()['text']
+                                        gurmukhi = transliterate(transcript, sanscript.DEVANAGARI, sanscript.GURMUKHI)
+                                        gurmukhi = clean_gurmukhi_text(gurmukhi)
+                                        
+                                        st.success(f"✅ Heard: {gurmukhi[:100]}...")
+                                        
+                                        # Search for matches
+                                        suggestions = search_shabads_fuzzy(gurmukhi, limit=10)
+                                        
+                                        if suggestions:
+                                            st.markdown("### 📖 Is it one of these shabads?")
+                                            st.markdown("Click the shabad you were listening to:")
+                                            
+                                            for i, sug in enumerate(suggestions, 1):
+                                                match_pct = int(sug['similarity'] * 100)
+                                                
+                                                if st.button(
+                                                    f"**{i}.** {sug['first_line'][:80]}... ({match_pct}% match)",
+                                                    key=f"sug_{sug['shabad_id']}",
+                                                    use_container_width=True
+                                                ):
+                                                    st.session_state.selected_shabad = sug['shabad_id']
+                                                    st.session_state.selected_page = sug['page']
+                                                    st.rerun()
+                                        else:
+                                            st.warning("No matches found. Try text search!")
+                                        break
+                                    
+                                    elif status == 'error':
+                                        st.error("Transcription failed")
+                                        break
+                                    
+                                    time.sleep(2)
+            
             except Exception as e:
                 st.error(f"Error: {e}")
             
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
+    
+    # Show full shabad if selected
+    if 'selected_shabad' in st.session_state:
+        st.markdown("---")
+        st.markdown("### ✨ Full Shabad")
+        
+        verses = get_full_shabad(st.session_state.selected_shabad)
+        
+        if verses:
+            st.success(f"📄 Ang (Page) {st.session_state.selected_page}")
+            
+            for verse in verses:
+                st.markdown(f'<div class="gurmukhi">{verse["gurmukhi"]}</div>', unsafe_allow_html=True)
+                if verse['english']:
+                    st.markdown(f'<div class="english">{verse["english"]}</div>', unsafe_allow_html=True)
+                st.markdown("")
 
-# ===== TAB 2: SEARCH SCRIPTURE =====
+# ===== TAB 2: POPULAR SHABADS =====
 with tab2:
-    st.markdown("### Step 2: Search Scripture")
-    st.markdown("Paste the Gurmukhi text from Step 1 (or any Gurmukhi text) to find matches")
+    st.markdown("### 📚 Most Common Gurdwara Shabads")
+    st.info("💡 Browse and click to see full text with translations")
+    
+    popular_searches = [
+        "ਧਨ ਧਨ ਰਾਮ ਦਾਸ ਗੁਰ",
+        "ਮੇਰੇ ਮਨ ਲੋਚੈ ਗੁਰ ਦਰਸਨ ਤਾਈ",
+        "ਵਾਹਿਗੁਰੂ ਵਾਹਿਗੁਰੂ",
+        "ਤੂ ਠਾਕੁਰੁ ਤੁਮ ਪਹਿ ਅਰਦਾਸਿ",
+        "ਜਪੁ ਜੀ ਸਾਹਿਬ",
+    ]
+    
+    for search in popular_searches:
+        if st.button(search, use_container_width=True, key=f"pop_{search}"):
+            st.session_state.text_search = search
+
+# ===== TAB 3: TEXT SEARCH =====
+with tab3:
+    st.markdown("### 🔍 Search by Text")
     
     search_text = st.text_area(
-        "Paste Gurmukhi text here:",
-        placeholder="ਗਹਿ ਭੁਜਾ ਲੀਨੇ. ਦਇਆ ਕੀਨੇ; ਆਪਨੇ ਕਰਿ ਮਾਨਿਆ ॥",
-        height=100,
-        label_visibility="collapsed"
+        "Paste or type Gurmukhi text:",
+        value=st.session_state.get('text_search', ''),
+        placeholder="ਵਾਹਿਗੁਰੂ",
+        height=80
     )
     
-    if st.button("🔍 Search Scripture", type="primary", use_container_width=True):
-        if search_text.strip():
-            with st.spinner("Searching..."):
-                results = search_gurbani(search_text, limit=15)
-            
-            st.markdown("---")
+    if st.button("Search", type="primary", use_container_width=True):
+        if search_text:
+            results = search_shabads_fuzzy(search_text, limit=15)
             
             if results:
-                st.success(f"✅ Found {len(results)} match(es)!")
-                st.markdown("")
+                st.success(f"Found {len(results)} match(es)!")
                 
-                for i, result in enumerate(results, 1):
-                    sim_pct = int(result['similarity'] * 100)
-                    
-                    if sim_pct >= 85:
-                        emoji = "🟢"
-                        label = "Exact Match"
-                    elif sim_pct >= 70:
-                        emoji = "🟡"
-                        label = "Good Match"
-                    elif sim_pct >= 50:
-                        emoji = "🟠"
-                        label = "Possible Match"
-                    else:
-                        emoji = "🔴"
-                        label = "Distant Match"
+                for i, r in enumerate(results, 1):
+                    sim_pct = int(r['similarity'] * 100)
                     
                     with st.container():
-                        st.markdown(f"### {emoji} Result {i} - {label} ({sim_pct}%)")
-                        st.markdown(f'<div class="gurmukhi">{result["gurmukhi"]}</div>', unsafe_allow_html=True)
-                        
-                        if result['english']:
-                            st.markdown(f'<div class="english">🇬🇧 {result["english"]}</div>', unsafe_allow_html=True)
-                        
-                        st.markdown(f'<div class="page-info">📄 Ang (Page) {result["page"]}</div>', unsafe_allow_html=True)
+                        st.markdown(f"### Result {i} ({sim_pct}% match)")
+                        st.markdown(f'<div class="gurmukhi">{r["first_line"]}</div>', unsafe_allow_html=True)
+                        if r['english']:
+                            st.markdown(f'<div class="english">{r["english"]}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="page-info">📄 Ang {r["page"]}</div>', unsafe_allow_html=True)
                         st.divider()
-            else:
-                st.warning("No matches found")
-        else:
-            st.warning("Please paste Gurmukhi text to search")
-
-# ===== FOOTER =====
-st.markdown("---")
-st.markdown("### 📱 Best Way to Use This App:")
-st.markdown("""
-**At the Gurdwara:**
-1. Listen to Gurbani being recited
-2. Type what you hear using a Gurmukhi keyboard
-3. Paste here to find the full verse
-4. Read the English translation to understand
-
-**Gurmukhi Keyboard Apps:**
-- Android: "Punjabi Keyboard" or "Google Gboard with Punjabi"
-- iPhone: "Punjabi Keyboard Pro"
-- Online: google.com/inputtools (search for Punjabi)
-""")
 
 st.markdown("---")
-st.markdown("🙏 *Powered by SikhiToTheMax Database*")
+st.markdown("💡 **Best Results:** Record 10-15 seconds in a quiet environment")
